@@ -3,7 +3,7 @@
 //! Commands own their inverse operation. This keeps undo and redo independent
 //! from UI concerns and makes every edit deterministic and testable.
 
-use domain_model::{Circuit, Component, EntityId, ModelError, Point};
+use domain_model::{Circuit, Component, Connection, EntityId, ModelError, Point};
 use std::fmt;
 
 /// A reversible edit to a circuit document.
@@ -13,6 +13,17 @@ pub enum Command {
     AddComponent(Component),
     /// Removes an existing component.
     RemoveComponent(EntityId),
+    /// Restores a component and the connections attached to it.
+    RestoreComponent {
+        /// Component to restore.
+        component: Component,
+        /// Connections that existed when the component was removed.
+        connections: Vec<Connection>,
+    },
+    /// Connects two existing ports.
+    Connect(Connection),
+    /// Disconnects two connected ports.
+    Disconnect(Connection),
     /// Changes the position of an existing component.
     MoveComponent {
         /// Identity of the component to move.
@@ -31,9 +42,31 @@ impl Command {
                 Ok(Self::RemoveComponent(id))
             }
             Self::RemoveComponent(id) => {
+                let connections = circuit.connections_for(id);
                 let component = circuit.remove_component(id)?;
-                let position = component.position();
-                Ok(Self::AddComponent(component).with_position(position))
+                Ok(Self::RestoreComponent {
+                    component,
+                    connections,
+                })
+            }
+            Self::RestoreComponent {
+                component,
+                connections,
+            } => {
+                let id = component.id();
+                circuit.add_component(component)?;
+                for connection in connections {
+                    circuit.connect(connection)?;
+                }
+                Ok(Self::RemoveComponent(id))
+            }
+            Self::Connect(connection) => {
+                circuit.connect(connection)?;
+                Ok(Self::Disconnect(connection))
+            }
+            Self::Disconnect(connection) => {
+                circuit.disconnect(connection)?;
+                Ok(Self::Connect(connection))
             }
             Self::MoveComponent { id, position } => {
                 let previous = circuit
@@ -46,16 +79,6 @@ impl Command {
                     position: previous,
                 })
             }
-        }
-    }
-
-    fn with_position(self, position: Point) -> Self {
-        match self {
-            Self::AddComponent(mut component) => {
-                component.move_to(position);
-                Self::AddComponent(component)
-            }
-            command => command,
         }
     }
 }
@@ -216,6 +239,55 @@ mod tests {
                 .position(),
             Point::new(20, 30)
         );
+    }
+
+    #[test]
+    fn command_history_round_trips_a_connection() {
+        let mut engine = DocumentEngine::new();
+        engine
+            .apply(Command::AddComponent(switch(1, Point::new(0, 0))))
+            .expect("first component can be added");
+        engine
+            .apply(Command::AddComponent(switch(2, Point::new(20, 0))))
+            .expect("second component can be added");
+        let connection = Connection::new(
+            domain_model::PortRef::new(EntityId::new(1), 0),
+            domain_model::PortRef::new(EntityId::new(2), 0),
+        );
+        engine
+            .apply(Command::Connect(connection))
+            .expect("connection can be created");
+        assert_eq!(engine.circuit().connections(), &[connection]);
+
+        engine.undo().expect("connection can be undone");
+        assert!(engine.circuit().connections().is_empty());
+        engine.redo().expect("connection can be redone");
+        assert_eq!(engine.circuit().connections(), &[connection]);
+    }
+
+    #[test]
+    fn removing_and_restoring_a_component_preserves_connections() {
+        let mut engine = DocumentEngine::new();
+        engine
+            .apply(Command::AddComponent(switch(1, Point::new(0, 0))))
+            .expect("first component can be added");
+        engine
+            .apply(Command::AddComponent(switch(2, Point::new(20, 0))))
+            .expect("second component can be added");
+        let connection = Connection::new(
+            domain_model::PortRef::new(EntityId::new(1), 0),
+            domain_model::PortRef::new(EntityId::new(2), 0),
+        );
+        engine
+            .apply(Command::Connect(connection))
+            .expect("connection can be created");
+        engine
+            .apply(Command::RemoveComponent(EntityId::new(1)))
+            .expect("component can be removed");
+        assert!(engine.circuit().connections().is_empty());
+
+        engine.undo().expect("component removal can be undone");
+        assert_eq!(engine.circuit().connections(), &[connection]);
     }
 
     #[test]

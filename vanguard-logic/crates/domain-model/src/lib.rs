@@ -350,6 +350,23 @@ impl Circuit {
         Ok(())
     }
 
+    /// Disconnects an existing pair of ports.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::UnknownConnection`] when the connection is not
+    /// present in either endpoint order.
+    pub fn disconnect(&mut self, connection: Connection) -> Result<(), ModelError> {
+        let reverse = Connection::new(connection.to(), connection.from());
+        let index = self
+            .connections
+            .iter()
+            .position(|candidate| *candidate == connection || *candidate == reverse)
+            .ok_or(ModelError::UnknownConnection(connection))?;
+        self.connections.remove(index);
+        Ok(())
+    }
+
     fn port_width(&self, port: PortRef) -> Result<SignalWidth, ModelError> {
         let component = self
             .component(port.component())
@@ -371,6 +388,18 @@ impl Circuit {
     #[must_use]
     pub fn connections(&self) -> &[Connection] {
         &self.connections
+    }
+
+    /// Returns connections attached to a component.
+    #[must_use]
+    pub fn connections_for(&self, id: EntityId) -> Vec<Connection> {
+        self.connections
+            .iter()
+            .copied()
+            .filter(|connection| {
+                connection.from().component() == id || connection.to().component() == id
+            })
+            .collect()
     }
 }
 
@@ -400,6 +429,8 @@ pub enum ModelError {
         /// Width of the second endpoint.
         to: SignalWidth,
     },
+    /// A connection was not present in the circuit.
+    UnknownConnection(Connection),
 }
 
 impl fmt::Display for ModelError {
@@ -435,6 +466,12 @@ impl fmt::Display for ModelError {
                     to.bits()
                 )
             }
+            Self::UnknownConnection(connection) => write!(
+                formatter,
+                "connection {:?} -> {:?} does not exist",
+                connection.from(),
+                connection.to()
+            ),
         }
     }
 }
