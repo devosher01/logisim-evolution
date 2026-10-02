@@ -1,0 +1,52 @@
+name: Vanguard Logic
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "vanguard-logic/**"
+      - ".github/workflows/vanguard-logic.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "vanguard-logic/**"
+      - ".github/workflows/vanguard-logic.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vanguard-logic-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Rust quality gates
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vanguard-logic
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.85.0
+          components: rustfmt, clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: vanguard-logic
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Run tests
+        run: cargo test --workspace --all-features

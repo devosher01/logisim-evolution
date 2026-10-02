@@ -1,0 +1,22 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/domain-model",
+    "crates/document-engine",
+    "crates/netlist-compiler",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85"
+license = "Proprietary"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = "deny"
+pedantic = "warn"
+nursery = "warn"

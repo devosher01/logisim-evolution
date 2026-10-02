@@ -1,0 +1,9 @@
+<type>(<scope>): <imperative summary>
+
+Why:
+
+What changed:
+
+Validation:
+
+Risks or follow-up:
