@@ -180,6 +180,11 @@ impl Component {
         self.position
     }
 
+    /// Moves the component to a new document position.
+    pub fn move_to(&mut self, position: Point) {
+        self.position = position;
+    }
+
     /// Returns the declared ports.
     #[must_use]
     pub fn ports(&self) -> &[Port] {
@@ -220,6 +225,43 @@ impl Circuit {
         Ok(())
     }
 
+    /// Returns a component by stable identity.
+    #[must_use]
+    pub fn component(&self, id: EntityId) -> Option<&Component> {
+        self.components
+            .iter()
+            .find(|component| component.id() == id)
+    }
+
+    /// Removes and returns a component by stable identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::UnknownEntity`] when `id` is not present.
+    pub fn remove_component(&mut self, id: EntityId) -> Result<Component, ModelError> {
+        let index = self
+            .components
+            .iter()
+            .position(|component| component.id() == id)
+            .ok_or(ModelError::UnknownEntity(id))?;
+        Ok(self.components.remove(index))
+    }
+
+    /// Moves an existing component to a new position.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::UnknownEntity`] when `id` is not present.
+    pub fn move_component(&mut self, id: EntityId, position: Point) -> Result<(), ModelError> {
+        let component = self
+            .components
+            .iter_mut()
+            .find(|component| component.id() == id)
+            .ok_or(ModelError::UnknownEntity(id))?;
+        component.move_to(position);
+        Ok(())
+    }
+
     /// Returns components in insertion order.
     #[must_use]
     pub fn components(&self) -> &[Component] {
@@ -238,6 +280,8 @@ pub enum ModelError {
     ComponentWithoutPorts,
     /// An identity was already used in the circuit.
     DuplicateEntity(EntityId),
+    /// An identity was not present in the circuit.
+    UnknownEntity(EntityId),
 }
 
 impl fmt::Display for ModelError {
@@ -249,6 +293,7 @@ impl fmt::Display for ModelError {
                 formatter.write_str("component must have at least one port")
             }
             Self::DuplicateEntity(id) => write!(formatter, "entity {} already exists", id.value()),
+            Self::UnknownEntity(id) => write!(formatter, "entity {} does not exist", id.value()),
         }
     }
 }
