@@ -1,0 +1,12 @@
+[package]
+name = "netlist-compiler"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+domain-model = { path = "../domain-model" }
+
+[lints]
+workspace = true

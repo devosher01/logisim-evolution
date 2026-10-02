@@ -84,6 +84,60 @@ pub struct Port {
     width: SignalWidth,
 }
 
+/// Reference to a port by owning component and zero-based port index.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct PortRef {
+    component: EntityId,
+    index: u16,
+}
+
+impl PortRef {
+    /// Creates a port reference.
+    #[must_use]
+    pub const fn new(component: EntityId, index: u16) -> Self {
+        Self { component, index }
+    }
+
+    /// Returns the owning component identity.
+    #[must_use]
+    pub const fn component(self) -> EntityId {
+        self.component
+    }
+
+    /// Returns the zero-based port index.
+    #[must_use]
+    pub const fn index(self) -> u16 {
+        self.index
+    }
+}
+
+/// Electrical connection between two component ports.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct Connection {
+    from: PortRef,
+    to: PortRef,
+}
+
+impl Connection {
+    /// Creates a connection between two distinct port references.
+    #[must_use]
+    pub const fn new(from: PortRef, to: PortRef) -> Self {
+        Self { from, to }
+    }
+
+    /// Returns the first endpoint.
+    #[must_use]
+    pub const fn from(self) -> PortRef {
+        self.from
+    }
+
+    /// Returns the second endpoint.
+    #[must_use]
+    pub const fn to(self) -> PortRef {
+        self.to
+    }
+}
+
 impl Port {
     /// Creates a validated port declaration.
     ///
@@ -196,6 +250,7 @@ impl Component {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Circuit {
     components: Vec<Component>,
+    connections: Vec<Connection>,
 }
 
 impl Circuit {
@@ -204,6 +259,7 @@ impl Circuit {
     pub const fn new() -> Self {
         Self {
             components: Vec::new(),
+            connections: Vec::new(),
         }
     }
 
@@ -244,6 +300,9 @@ impl Circuit {
             .iter()
             .position(|component| component.id() == id)
             .ok_or(ModelError::UnknownEntity(id))?;
+        self.connections.retain(|connection| {
+            connection.from().component() != id && connection.to().component() != id
+        });
         Ok(self.components.remove(index))
     }
 
@@ -262,10 +321,56 @@ impl Circuit {
         Ok(())
     }
 
+    /// Connects two existing ports with matching widths.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when an endpoint is missing, a port index is invalid,
+    /// the widths differ, the endpoints are equal, or the connection exists.
+    pub fn connect(&mut self, connection: Connection) -> Result<(), ModelError> {
+        if connection.from() == connection.to() {
+            return Err(ModelError::SelfConnection(connection.from()));
+        }
+        let from_width = self.port_width(connection.from())?;
+        let to_width = self.port_width(connection.to())?;
+        if from_width != to_width {
+            return Err(ModelError::WidthMismatch {
+                from: from_width,
+                to: to_width,
+            });
+        }
+        if self.connections.contains(&connection)
+            || self
+                .connections
+                .contains(&Connection::new(connection.to(), connection.from()))
+        {
+            return Err(ModelError::DuplicateConnection(connection));
+        }
+        self.connections.push(connection);
+        Ok(())
+    }
+
+    fn port_width(&self, port: PortRef) -> Result<SignalWidth, ModelError> {
+        let component = self
+            .component(port.component())
+            .ok_or_else(|| ModelError::UnknownEntity(port.component()))?;
+        component
+            .ports()
+            .get(usize::from(port.index()))
+            .map(Port::width)
+            .ok_or(ModelError::InvalidPort(port))
+    }
+
     /// Returns components in insertion order.
     #[must_use]
     pub fn components(&self) -> &[Component] {
         &self.components
+    }
+
+    /// Returns all validated connections in insertion order.
+    #[must_use]
+    pub fn connections(&self) -> &[Connection] {
+        &self.connections
     }
 }
 
@@ -282,6 +387,19 @@ pub enum ModelError {
     DuplicateEntity(EntityId),
     /// An identity was not present in the circuit.
     UnknownEntity(EntityId),
+    /// A port index was not present on its component.
+    InvalidPort(PortRef),
+    /// A connection endpoint was used twice in the same pair.
+    DuplicateConnection(Connection),
+    /// A port was connected to itself.
+    SelfConnection(PortRef),
+    /// Connected ports have incompatible widths.
+    WidthMismatch {
+        /// Width of the first endpoint.
+        from: SignalWidth,
+        /// Width of the second endpoint.
+        to: SignalWidth,
+    },
 }
 
 impl fmt::Display for ModelError {
@@ -294,6 +412,29 @@ impl fmt::Display for ModelError {
             }
             Self::DuplicateEntity(id) => write!(formatter, "entity {} already exists", id.value()),
             Self::UnknownEntity(id) => write!(formatter, "entity {} does not exist", id.value()),
+            Self::InvalidPort(port) => write!(
+                formatter,
+                "port {} on entity {} does not exist",
+                port.index(),
+                port.component().value()
+            ),
+            Self::DuplicateConnection(connection) => write!(
+                formatter,
+                "connection {:?} -> {:?} already exists",
+                connection.from(),
+                connection.to()
+            ),
+            Self::SelfConnection(port) => {
+                write!(formatter, "port {port:?} cannot connect to itself")
+            }
+            Self::WidthMismatch { from, to } => {
+                write!(
+                    formatter,
+                    "port widths differ: {} and {}",
+                    from.bits(),
+                    to.bits()
+                )
+            }
         }
     }
 }
